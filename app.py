@@ -2,7 +2,7 @@ from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import *
-import openai
+from openai import OpenAI
 import os
 import time
 
@@ -11,7 +11,9 @@ app = Flask(__name__)
 # 初始化 LINE Bot 和 OpenAI API
 line_bot_api = LineBotApi(os.environ['CHANNEL_ACCESS_TOKEN'])
 handler = WebhookHandler(os.environ['CHANNEL_SECRET'])
-openai.api_key = os.environ['OPENAI_API_KEY']
+
+# 初始化 OpenAI 客戶端
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 # 儲存用戶對話記錄的字典（格式：{user_id: [(role, content), ...]})
 user_sessions = {}
@@ -32,7 +34,7 @@ def get_user_session(user_id):
         else:
             return user_sessions[user_id]['messages']
 
-    # 如果是新的對話或已過期，初始化對話
+    # 初始化對話
     user_sessions[user_id] = {'messages': [SYSTEM_PROMPT], 'last_time': current_time}
     return user_sessions[user_id]['messages']
 
@@ -69,11 +71,11 @@ def handle_message(event):
 
         # 呼叫 OpenAI API 並取得回應
         try:
-            response = openai.ChatCompletion.create(
-                model="gpt-4",  # 使用 GPT-4 API 模型
-                messages=get_user_session(user_id)  # 傳入用戶對話上下文
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",  # 使用 GPT-4o-mini 模型
+                messages=get_user_session(user_id)
             )
-            reply_text = response.choices[0].message['content'].strip()
+            reply_text = response['choices'][0]['message']['content'].strip()
             update_user_session(user_id, "assistant", reply_text)
 
         except Exception as e:
