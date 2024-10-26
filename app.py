@@ -34,7 +34,7 @@ def get_user_session(user_id):
         else:
             return user_sessions[user_id]['messages']
 
-    # 初始化對話
+    # 如果是新的對話或已過期，初始化對話
     user_sessions[user_id] = {'messages': [SYSTEM_PROMPT], 'last_time': current_time}
     return user_sessions[user_id]['messages']
 
@@ -75,13 +75,17 @@ def handle_message(event):
                 model="gpt-4o-mini",  # 使用 GPT-4o-mini 模型
                 messages=get_user_session(user_id)
             )
-            reply_text = response['choices'][0]['message']['content'].strip()
+
+            # 取得回應文字
+            reply_text = response.choices[0].message.content.strip()
+
+            # 將 AI 回應加入對話記錄
             update_user_session(user_id, "assistant", reply_text)
 
         except Exception as e:
             reply_text = f"抱歉，發生錯誤：{str(e)}"
 
-    # 傳送回應給 LINE 使用者，附加 Quick Reply 選項
+    # 傳送回應給 LINE 使用者，並附加 Quick Reply 選項
     message = TextSendMessage(
         text=reply_text,
         quick_reply=QuickReply(items=[
