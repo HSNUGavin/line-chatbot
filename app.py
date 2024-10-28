@@ -117,17 +117,26 @@ def handle_message(event):
             reply_text = response.choices[0].message.content.strip()
             update_user_session(user_id, "assistant", reply_text)
 
-            # 即刻回應用戶，避免 token 過期
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextSendMessage(
-                    text=reply_text,
-                    quick_reply=QuickReply(items=[
-                        QuickReplyButton(action=MessageAction(label="開始新對話", text="開始新對話")),
-                        QuickReplyButton(action=MessageAction(label="搜尋資料庫", text="[SEARCH]"))
-                    ])
+            # 檢查 AI 回覆是否包含 [SEARCH] 指令
+            if "[SEARCH]" in reply_text:
+                # 提取搜尋關鍵字並觸發搜尋
+                search_query = reply_text.split("[SEARCH]")[-1].strip()
+                handle_search_request(user_id, search_query)
+
+                # 告知用戶搜尋正在進行
+                send_push_message(user_id, "已收到您的需求，系統正在搜尋資料中...")
+            else:
+                # 正常回覆用戶
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(
+                        text=reply_text,
+                        quick_reply=QuickReply(items=[
+                            QuickReplyButton(action=MessageAction(label="開始新對話", text="開始新對話")),
+                            QuickReplyButton(action=MessageAction(label="搜尋資料庫", text="[SEARCH]"))
+                        ])
+                    )
                 )
-            )
         except LineBotApiError as e:
             # 若 reply token 無效，改用推播訊息，並記錄錯誤
             logging.warning(f"無效的 reply token，使用 push_message: {e}")
