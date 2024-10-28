@@ -9,6 +9,7 @@ import threading
 import requests
 import re
 import logging
+import uuid  # 用於生成唯一的對話 ID
 
 # 設置日誌級別為 INFO
 logging.basicConfig(level=logging.INFO)
@@ -28,15 +29,14 @@ SESSION_TIMEOUT = 30 * 60  # 30 分鐘
 DIFY_API_URL = "https://api.dify.ai/v1/workflows/run"
 DIFY_API_KEY = os.environ.get("DIFY_API_KEY")
 
+# 系統 Prompt
 SYSTEM_PROMPT = {
     "role": "system",
     "content": (
         "你是一個法律AI助理。你有一個工具，可以呼叫 `Search API` 搜尋資訊。"
         "請在需要時使用 `[SEARCH]` 指令，例如：`[SEARCH]請搜尋最新的離婚法規`。"
         "完成搜索後，你會收到以 `[SEARCH_RESULT]` 開頭的結果，並應將其整合進回覆中。"
-        "請注意: 用戶來詢問的問題可能是同一個，請你根據上下文判斷你要使用 API 搜尋的問題，問題請盡量貼近用戶的問題"
-        "並且透過問答深入了解用戶真的想解決的問題是什麼。"
-        "回覆時請將文字長度縮短但保留重要語意與建議，另外盡可能引用法條"
+        "請注意: 用戶可能會反覆詢問類似問題，請依照最新的搜尋結果進行回覆，避免使用過期資訊。"
     )
 }
 
@@ -45,19 +45,29 @@ def get_user_session(user_id):
     current_time = time.time()
     if user_id in user_sessions:
         if current_time - user_sessions[user_id]['last_time'] > SESSION_TIMEOUT:
-            del user_sessions[user_id]
+            del user_sessions[user_id]  # 刪除過期的對話
         else:
             return user_sessions[user_id]['messages']
 
-    # 初始化新對話
-    user_sessions[user_id] = {'messages': [SYSTEM_PROMPT], 'last_time': current_time}
+    # 初始化新對話，生成新的對話 ID
+    conversation_id = str(uuid.uuid4())
+    user_sessions[user_id] = {
+        'messages': [SYSTEM_PROMPT],
+        'last_time': current_time,
+        'conversation_id': conversation_id
+    }
+    logging.info(f"新對話已啟動，對話 ID: {conversation_id}")
     return user_sessions[user_id]['messages']
 
 def update_user_session(user_id, role, content):
-    """更新對話記錄"""
+    """更新對話記錄並記錄日誌"""
     messages = get_user_session(user_id)
     messages.append({"role": role, "content": content})
     user_sessions[user_id]['last_time'] = time.time()
+
+    # 記錄對話 ID 和更新內容
+    conversation_id = user_sessions[user_id]['conversation_id']
+    logging.info(f"對話 ID: {conversation_id}，新增訊息: {role} - {content}")
 
 def call_dify_workflow(question, user_id):
     """呼叫 Dify Workflow API 並回傳搜尋結果"""
@@ -90,12 +100,21 @@ def call_dify_workflow(question, user_id):
         return f"API 請求失敗：{e}"
 
 def handle_search_request(user_id, search_query):
-    """非同步處理搜尋請求"""
+    """非同步處理搜尋請求並記錄對話"""
     def search_and_respond():
+        # 呼叫 Dify API 並取得搜尋結果
         search_result = call_dify_workflow(search_query, user_id)
+
+        # 清理舊對話上下文，僅保留最新搜尋結果
+        user_sessions[user_id]['messages'] = [SYSTEM_PROMPT]
         update_user_session(user_id, "system", f"[SEARCH_RESULT] {search_result}")
 
+        # 呼叫 OpenAI API，生成回應
         messages = get_user_session(user_id)
+        conversation_id = user_sessions[user_id]['conversation_id']
+
+        logging.info(f"傳給 OpenAI 的對話 ID: {conversation_id}，內容: {messages}")
+
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages
@@ -103,6 +122,7 @@ def handle_search_request(user_id, search_query):
         reply_text = response.choices[0].message.content.strip()
         update_user_session(user_id, "assistant", reply_text)
 
+        # 發送回應給用戶
         line_bot_api.push_message(user_id, TextSendMessage(text=reply_text))
 
     threading.Thread(target=search_and_respond).start()
@@ -125,21 +145,19 @@ def handle_message(event):
     user_message = event.message.text
 
     if user_message.lower() in ["開始新對話", "我想要搜尋資料庫"]:
-        if user_message.lower() == "開始新對話":
-            user_sessions.pop(user_id, None)
-            reply_text = "已開始新的對話！請輸入您的法律問題。"
-        else:
-            # 模擬用戶輸入 "我想要搜尋資料庫"
-            user_message = "我想要搜尋資料庫"
-            update_user_session(user_id, "user", user_message)
-            reply_text = "您希望搜尋什麼資料？"
-
+        user_sessions.pop(user_id, None)  # 清除舊對話
+        reply_text = "已開始新的對話！請輸入您的法律問題。" if user_message.lower() == "開始新對話" else "您希望搜尋什麼資料？"
     else:
         update_user_session(user_id, "user", user_message)
         try:
+            messages = get_user_session(user_id)
+            conversation_id = user_sessions[user_id]['conversation_id']
+
+            logging.info(f"傳給 OpenAI 的對話 ID: {conversation_id}，內容: {messages}")
+
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=get_user_session(user_id)
+                messages=messages
             )
             reply_text = response.choices[0].message.content.strip()
             update_user_session(user_id, "assistant", reply_text)
