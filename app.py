@@ -33,6 +33,7 @@ SYSTEM_PROMPT = {
 }
 
 MAX_SESSION_LENGTH = 10  # 限制對話最多保留 10 則訊息
+ERROR_CACHE = set()  # 記錄已經推送過錯誤的用戶
 
 def get_user_session(user_id):
     """取得或初始化用戶的對話記錄"""
@@ -53,11 +54,13 @@ def update_user_session(user_id, role, content):
     user_sessions[user_id]['last_time'] = time.time()
 
 def send_push_message(user_id, text):
-    """推播訊息給用戶"""
-    try:
-        line_bot_api.push_message(user_id, TextSendMessage(text=text))
-    except LineBotApiError as e:
-        logging.error(f"推播訊息失敗: {e}")
+    """推播訊息給用戶，避免重複推播"""
+    if user_id not in ERROR_CACHE:
+        try:
+            line_bot_api.push_message(user_id, TextSendMessage(text=text))
+            ERROR_CACHE.add(user_id)  # 記錄已推播錯誤的用戶
+        except LineBotApiError as e:
+            logging.error(f"推播訊息失敗: {e}")
 
 def store_search_result(user_id, search_result):
     """將搜尋結果存入對話紀錄，並推播通知"""
