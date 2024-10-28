@@ -62,14 +62,23 @@ def call_dify_workflow(question):
     }
     try:
         response = requests.post(API_URL, json=payload, headers=headers)
-        response.raise_for_status()
+        response.raise_for_status()  # 檢查是否有 HTTP 錯誤
         result = response.json()
+
         if result["data"]["status"] == "succeeded":
-            return result["data"]["outputs"].get("text", "未找到合適的結果。")
+            return result["data"]["outputs"].get("text", "未找到相關結果。")
         else:
-            return "搜索失敗，請稍後再試。"
-    except requests.RequestException as e:
-        return f"API 請求失敗：{e}"
+            # 回傳具體的失敗訊息給用戶
+            return "搜索失敗，API 回應：{}".format(result["data"].get("error", "未知錯誤"))
+
+    except requests.exceptions.Timeout:
+        return "搜索請求超時，請稍後再試。"
+    except requests.exceptions.ConnectionError:
+        return "無法連接到搜索服務，請檢查您的網路連線。"
+    except requests.exceptions.HTTPError as e:
+        return f"API 請求失敗，狀態碼：{e.response.status_code}"
+    except Exception as e:
+        return f"發生未知錯誤：{e}"
 
 def handle_search_request(user_id, search_query):
     """非同步處理搜索請求並更新對話"""
