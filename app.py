@@ -10,7 +10,7 @@ import requests
 import re
 import logging
 
-# 設置日誌級別為 INFO，方便查看 API 請求的細節
+# 設置日誌級別為 INFO，方便追蹤 API 請求和回應
 logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
@@ -24,7 +24,11 @@ client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 user_sessions = {}
 SESSION_TIMEOUT = 30 * 60  # 30 分鐘
 
-# 系統提示，教導 AI 何時使用 Search API
+# Dify API 設定
+DIFY_API_URL = "https://api.dify.ai/v1/workflows/run"
+DIFY_API_KEY = os.environ.get("DIFY_API_KEY")
+WORKFLOW_ID = "56389aca-bed6-4333-96a9-ce89f27b780c"
+
 SYSTEM_PROMPT = {
     "role": "system",
     "content": (
@@ -39,7 +43,7 @@ def get_user_session(user_id):
     current_time = time.time()
     if user_id in user_sessions:
         if current_time - user_sessions[user_id]['last_time'] > SESSION_TIMEOUT:
-            del user_sessions[user_id]  # 刪除過期的對話
+            del user_sessions[user_id]
         else:
             return user_sessions[user_id]['messages']
 
@@ -55,53 +59,46 @@ def update_user_session(user_id, role, content):
 
 def call_dify_workflow(question, user_id):
     """呼叫 Dify Workflow API 並回傳搜尋結果"""
-    API_URL = "https://api.dify.ai/v1/workflows/run"
-    API_KEY = os.environ.get("DIFY_API_KEY")
-
     headers = {
-        "Authorization": f"Bearer {API_KEY}",
+        "Authorization": f"Bearer {DIFY_API_KEY}",
         "Content-Type": "application/json"
     }
     payload = {
         "inputs": {"Question": question},
         "response_mode": "blocking",
-        "user": user_id  # 使用 LINE 用戶 ID
+        "user": user_id  # 使用 LINE 用戶 ID 作為 user 參數
     }
 
-    try:
-        logging.info(f"發送 API 請求至 {API_URL}，問題：{question}")
-        response = requests.post(API_URL, json=payload, headers=headers)
-        logging.info(f"API 回應狀態碼：{response.status_code}")
+    logging.info(f"發送 API 請求至 {DIFY_API_URL}，問題：{question}")
 
-        response.raise_for_status()  # 檢查 HTTP 錯誤
+    try:
+        response = requests.post(DIFY_API_URL, json=payload, headers=headers)
+        logging.info(f"API 回應狀態碼：{response.status_code}")
+        response.raise_for_status()  # 檢查是否有 HTTP 錯誤
+
         result = response.json()
+        logging.info(f"API 回應內容：{result}")
 
         if result["data"]["status"] == "succeeded":
-            logging.info("成功取得搜尋結果")
-            return result["data"]["outputs"].get("text", "未找到相關結果。")
+            outputs = result["data"]["outputs"]
+            output_text = outputs.get("text") or outputs.get("test", "未找到相關結果。")
+            logging.info(f"成功取得搜尋結果：{output_text}")
+            return output_text
         else:
             error_msg = result["data"].get("error", "未知錯誤")
             logging.error(f"API 搜尋失敗：{error_msg}")
             return f"API 搜尋失敗：{error_msg}"
 
-    except requests.exceptions.Timeout:
-        logging.error("API 請求超時")
-        return "搜索請求超時，請稍後再試。"
-    except requests.exceptions.ConnectionError:
-        logging.error("無法連接到 API 伺服器")
-        return "無法連接到搜索服務，請檢查您的網路連線。"
-    except requests.exceptions.HTTPError as e:
-        logging.error(f"API 請求失敗，狀態碼：{e.response.status_code}")
-        return f"API 請求失敗，狀態碼：{e.response.status_code}"
-    except Exception as e:
-        logging.error(f"發生未知錯誤：{str(e)}")
-        return f"發生未知錯誤：{e}"
+    except requests.RequestException as e:
+        logging.error(f"API 請求失敗：{e}")
+        return f"API 請求失敗：{e}"
 
 def handle_search_request(user_id, search_query):
-    """非同步處理搜索請求並更新對話"""
+    """非同步處理搜尋請求並更新對話"""
     def search_and_respond():
         search_result = call_dify_workflow(search_query, user_id)
         update_user_session(user_id, "system", f"[SEARCH_RESULT] {search_result}")
+
         messages = get_user_session(user_id)
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -109,6 +106,7 @@ def handle_search_request(user_id, search_query):
         )
         reply_text = response.choices[0].message.content.strip()
         update_user_session(user_id, "assistant", reply_text)
+
         line_bot_api.push_message(user_id, TextSendMessage(text=reply_text))
 
     threading.Thread(target=search_and_respond).start()
