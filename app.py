@@ -21,7 +21,7 @@ line_bot_api = LineBotApi(os.environ['CHANNEL_ACCESS_TOKEN'])
 handler = WebhookHandler(os.environ['CHANNEL_SECRET'])
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# 用戶對話記錄存儲區
+# 用戶對話紀錄存儲區
 user_sessions = {}
 SESSION_TIMEOUT = 30 * 60  # 30 分鐘
 
@@ -29,7 +29,7 @@ SESSION_TIMEOUT = 30 * 60  # 30 分鐘
 DIFY_API_URL = "https://api.dify.ai/v1/workflows/run"
 DIFY_API_KEY = os.environ.get("DIFY_API_KEY")
 
-# AI 系統提示
+# 系統提示
 SYSTEM_PROMPT = {
     "role": "system",
     "content": (
@@ -89,7 +89,6 @@ def call_dify_workflow(question, user_id):
         result = response.json()
         logging.info(f"API 回應內容：{result}")
 
-        # 確保從 outputs['test'] 提取內容
         if result["data"]["status"] == "succeeded":
             return result["data"]["outputs"].get("test", "未找到相關結果。")
         else:
@@ -107,7 +106,7 @@ def handle_search_request(user_id, conversation_id, search_query):
         # 更新對話記錄，將搜尋結果加入對話
         update_user_session(user_id, conversation_id, "system", f"[SEARCH_RESULT] {search_result}")
 
-        # 呼叫 OpenAI API 進一步處理回應
+        # 呼叫 OpenAI API 生成最終回應
         messages = get_user_session(user_id, conversation_id)
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -119,7 +118,6 @@ def handle_search_request(user_id, conversation_id, search_query):
         update_user_session(user_id, conversation_id, "assistant", reply_text)
         line_bot_api.push_message(user_id, TextSendMessage(text=reply_text))
 
-    # 啟動非同步線程避免阻塞
     threading.Thread(target=search_and_respond).start()
 
 @app.route("/callback", methods=['POST'])
@@ -146,9 +144,11 @@ def handle_message(event):
     else:
         update_user_session(user_id, conversation_id, "user", user_message)
         try:
+            # 使用完整的對話記錄呼叫 OpenAI API
+            messages = get_user_session(user_id, conversation_id)
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=get_user_session(user_id, conversation_id)
+                messages=messages
             )
             reply_text = response.choices[0].message.content.strip()
             update_user_session(user_id, conversation_id, "assistant", reply_text)
@@ -166,7 +166,6 @@ def handle_message(event):
         except Exception as e:
             reply_text = f"發生錯誤：{e}"
 
-    # 發送回應
     message = TextSendMessage(
         text=reply_text,
         quick_reply=QuickReply(items=[
