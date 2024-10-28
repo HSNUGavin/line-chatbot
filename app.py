@@ -33,7 +33,6 @@ SYSTEM_PROMPT = {
 }
 
 MAX_SESSION_LENGTH = 10  # 限制對話最多保留 10 則訊息
-ERROR_CACHE = set()  # 記錄已經推送過錯誤的用戶
 
 def get_user_session(user_id):
     """取得或初始化用戶的對話記錄"""
@@ -54,23 +53,21 @@ def update_user_session(user_id, role, content):
     user_sessions[user_id]['last_time'] = time.time()
 
 def send_push_message(user_id, text):
-    """推播訊息給用戶，避免重複推播"""
-    if user_id not in ERROR_CACHE:
-        try:
-            line_bot_api.push_message(user_id, TextSendMessage(text=text))
-            ERROR_CACHE.add(user_id)  # 記錄已推播錯誤的用戶
-        except LineBotApiError as e:
-            logging.error(f"推播訊息失敗: {e}")
+    """推播訊息給用戶"""
+    try:
+        line_bot_api.push_message(user_id, TextSendMessage(text=text))
+    except LineBotApiError as e:
+        logging.error(f"推播訊息失敗: {e}")
 
 def store_search_result(user_id, search_result):
     """將搜尋結果存入對話紀錄，並推播通知"""
     update_user_session(user_id, "system", f"[SEARCH_RESULT] {search_result}")
-    send_push_message(user_id, "搜尋已完成，系統將根據結果回應您的問題。")
+    send_push_message(user_id, f"搜尋完成，結果如下：\n{search_result}")
 
-def handle_search_request(user_id, user_message):
-    """處理搜尋請求"""
-    # 模擬搜尋結果（可替換為 API 呼叫）
-    search_result = "這是模擬的搜尋結果：最新的大法官釋憲新聞內容。"
+def handle_search_request(user_id, search_query):
+    """執行搜尋並推播結果"""
+    # 模擬搜尋結果（可替換為實際 API 調用）
+    search_result = f"這是模擬的搜尋結果：{search_query} 的相關新聞。"
     store_search_result(user_id, search_result)
 
 @app.route("/callback", methods=['POST'])
@@ -94,17 +91,14 @@ def handle_message(event):
     update_user_session(user_id, "user", user_message)
 
     if "[SEARCH]" in user_message:
-        # 處理搜尋請求
+        # 處理搜尋請求，立即回應避免 token 過期
         handle_search_request(user_id, user_message)
-
-        # 回應用戶，通知搜尋進行中，避免 token 過期
         try:
             line_bot_api.reply_message(
                 event.reply_token,
                 TextSendMessage(text="搜尋進行中，請稍候...")
             )
         except LineBotApiError as e:
-            # 若 reply_token 無效，改用推播訊息，並記錄錯誤
             logging.warning(f"無效的 reply token，使用 push_message: {e}")
             send_push_message(user_id, "搜尋進行中，系統將稍後推播結果給您。")
     else:
@@ -117,16 +111,15 @@ def handle_message(event):
             reply_text = response.choices[0].message.content.strip()
             update_user_session(user_id, "assistant", reply_text)
 
-            # 檢查 AI 回覆是否包含 [SEARCH] 指令
+            # 如果回應包含 [SEARCH] 指令，觸發內部搜尋
             if "[SEARCH]" in reply_text:
-                # 提取搜尋關鍵字並觸發搜尋
                 search_query = reply_text.split("[SEARCH]")[-1].strip()
                 handle_search_request(user_id, search_query)
 
-                # 告知用戶搜尋正在進行
-                send_push_message(user_id, "已收到您的需求，系統正在搜尋資料中...")
+                # 通知用戶搜尋正在進行
+                send_push_message(user_id, "已收到需求，系統正在搜尋資料中...")
             else:
-                # 正常回覆用戶
+                # 正常回應用戶
                 line_bot_api.reply_message(
                     event.reply_token,
                     TextSendMessage(
@@ -138,7 +131,7 @@ def handle_message(event):
                     )
                 )
         except LineBotApiError as e:
-            # 若 reply token 無效，改用推播訊息，並記錄錯誤
+            # 若 reply_token 無效，改用 push_message
             logging.warning(f"無效的 reply token，使用 push_message: {e}")
             send_push_message(user_id, "系統繁忙，請稍後再試。")
         except Exception as e:
