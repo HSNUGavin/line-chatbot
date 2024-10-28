@@ -34,7 +34,7 @@ SYSTEM_PROMPT = {
     "role": "system",
     "content": (
         "你是一個法律AI助理。你有一個工具，可以呼叫 `Search API` 搜尋資訊。"
-        "請在需要時使用 `[SEARCH]` 指令，例如：`[SEARCH]請搜尋最新的離婚法規`。"
+        "請在需要時使用 `[SEARCH]` 指令，例如：`[SEARCH]相關關鍵字`。"
         "完成搜索後，你會收到以 `[SEARCH_RESULT]` 開頭的結果，並應將其整合進回覆中。"
         "請注意: 用戶來詢問的問題可能是同一個，請你根據上下文判斷你要使用 API 搜尋的問題，"
         "並且透過問答深入了解用戶真正想解決的問題是什麼。"
@@ -89,8 +89,9 @@ def call_dify_workflow(question, user_id):
         result = response.json()
         logging.info(f"API 回應內容：{result}")
 
+        # 確保從 outputs['test'] 提取內容
         if result["data"]["status"] == "succeeded":
-            return result["data"]["outputs"].get("text", "未找到相關結果。")
+            return result["data"]["outputs"].get("test", "未找到相關結果。")
         else:
             return f"API 搜尋失敗：{result['data'].get('error', '未知錯誤')}"
 
@@ -100,19 +101,25 @@ def call_dify_workflow(question, user_id):
 def handle_search_request(user_id, conversation_id, search_query):
     """非同步處理搜尋請求"""
     def search_and_respond():
+        # 呼叫 Dify API 並取得搜尋結果
         search_result = call_dify_workflow(search_query, user_id)
+
+        # 更新對話記錄，將搜尋結果加入對話
         update_user_session(user_id, conversation_id, "system", f"[SEARCH_RESULT] {search_result}")
 
+        # 呼叫 OpenAI API 進一步處理回應
         messages = get_user_session(user_id, conversation_id)
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages
         )
         reply_text = response.choices[0].message.content.strip()
-        update_user_session(user_id, conversation_id, "assistant", reply_text)
 
+        # 更新對話並發送回應給用戶
+        update_user_session(user_id, conversation_id, "assistant", reply_text)
         line_bot_api.push_message(user_id, TextSendMessage(text=reply_text))
 
+    # 啟動非同步線程避免阻塞
     threading.Thread(target=search_and_respond).start()
 
 @app.route("/callback", methods=['POST'])
@@ -146,6 +153,7 @@ def handle_message(event):
             reply_text = response.choices[0].message.content.strip()
             update_user_session(user_id, conversation_id, "assistant", reply_text)
 
+            # 檢查是否觸發 [SEARCH] 指令
             search_pattern = r"\[SEARCH\](.*)"
             match = re.search(search_pattern, reply_text)
             if match:
@@ -158,6 +166,7 @@ def handle_message(event):
         except Exception as e:
             reply_text = f"發生錯誤：{e}"
 
+    # 發送回應
     message = TextSendMessage(
         text=reply_text,
         quick_reply=QuickReply(items=[
