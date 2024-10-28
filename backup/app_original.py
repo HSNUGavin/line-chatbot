@@ -19,13 +19,13 @@ client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 user_sessions = {}
 SESSION_TIMEOUT = 30 * 60  # 30 分鐘
 
-# 系統提示，教導 AI 何時使用 Search API
 SYSTEM_PROMPT = {
     "role": "system",
     "content": (
-        "你是一個法律AI助理。當你無法回答某個問題時，可以呼叫 `Search API` 搜尋資訊。"
-        "請在需要時使用 `[SEARCH]` 指令，例如：`[SEARCH]請搜尋最新的離婚法規`。"
-        "完成搜索後，你會收到以 `[SEARCH_RESULT]` 開頭的結果，並應將其整合進回覆中。"
+        "你是一個法律AI助理。當你無法回答某個問題時，"
+        "請呼叫 `Search API`，並告訴用戶正在搜尋。"
+        "例如：`[SEARCH]請搜尋最新的離婚法規`。"
+        "當收到搜尋結果（以 `[SEARCH_RESULT]` 開頭）後，請將其整合進回覆中。"
     )
 }
 
@@ -37,7 +37,7 @@ def get_user_session(user_id):
             del user_sessions[user_id]  # 刪除過期的對話
         else:
             return user_sessions[user_id]['messages']
-    # 初始化新對話
+
     user_sessions[user_id] = {'messages': [SYSTEM_PROMPT], 'last_time': current_time}
     return user_sessions[user_id]['messages']
 
