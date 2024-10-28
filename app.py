@@ -10,7 +10,6 @@ import requests
 import re
 import logging
 
-# 設置日誌級別為 INFO，方便追蹤 API 請求和回應
 logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
@@ -27,17 +26,14 @@ SESSION_TIMEOUT = 30 * 60  # 30 分鐘
 # Dify API 設定
 DIFY_API_URL = "https://api.dify.ai/v1/workflows/run"
 DIFY_API_KEY = os.environ.get("DIFY_API_KEY")
-WORKFLOW_ID = "56389aca-bed6-4333-96a9-ce89f27b780c"
 
-# 更新的系統 prompt
 SYSTEM_PROMPT = {
     "role": "system",
     "content": (
         "你是一個法律AI助理。你有一個工具，可以呼叫 `Search API` 搜尋資訊。"
         "請在需要時使用 `[SEARCH]` 指令，例如：`[SEARCH]請搜尋最新的離婚法規`。"
         "完成搜索後，你會收到以 `[SEARCH_RESULT]` 開頭的結果，並應將其整合進回覆中。"
-        "請注意: 用戶來詢問的問題可能是同一個，請你根據上下文判斷你要使用 API 搜尋的問題，"
-        "並且透過問答深入了解用戶真的想解決的問題是什麼。"
+        "請根據上下文判斷要搜尋的具體問題，並確保搜尋結果與用戶需求相關。"
     )
 }
 
@@ -50,7 +46,6 @@ def get_user_session(user_id):
         else:
             return user_sessions[user_id]['messages']
 
-    # 初始化新對話
     user_sessions[user_id] = {'messages': [SYSTEM_PROMPT], 'last_time': current_time}
     return user_sessions[user_id]['messages']
 
@@ -60,31 +55,30 @@ def update_user_session(user_id, role, content):
     messages.append({"role": role, "content": content})
     user_sessions[user_id]['last_time'] = time.time()
 
-def call_dify_workflow(question, user_id):
+def call_dify_workflow(question, context, user_id):
     """呼叫 Dify Workflow API 並回傳搜尋結果"""
     headers = {
         "Authorization": f"Bearer {DIFY_API_KEY}",
         "Content-Type": "application/json"
     }
     payload = {
-        "inputs": {"Question": question},
+        "inputs": {"Question": f"{context} 具體問題是：{question}"},
         "response_mode": "blocking",
-        "user": user_id  # 使用 LINE 用戶 ID 作為 user 參數
+        "user": user_id
     }
 
-    logging.info(f"發送 API 請求至 {DIFY_API_URL}，問題：{question}")
+    logging.info(f"發送 API 請求至 {DIFY_API_URL}，問題：{question}，上下文：{context}")
 
     try:
         response = requests.post(DIFY_API_URL, json=payload, headers=headers)
         logging.info(f"API 回應狀態碼：{response.status_code}")
-        response.raise_for_status()  # 檢查是否有 HTTP 錯誤
-
+        response.raise_for_status()
         result = response.json()
         logging.info(f"API 回應內容：{result}")
 
         if result["data"]["status"] == "succeeded":
             outputs = result["data"]["outputs"]
-            output_text = outputs.get("text") or outputs.get("test", "未找到相關結果。")
+            output_text = outputs.get("text", "未找到相關結果。")
             logging.info(f"成功取得搜尋結果：{output_text}")
             return output_text
         else:
@@ -99,7 +93,8 @@ def call_dify_workflow(question, user_id):
 def handle_search_request(user_id, search_query):
     """非同步處理搜尋請求並更新對話"""
     def search_and_respond():
-        search_result = call_dify_workflow(search_query, user_id)
+        context = "\n".join([msg["content"] for msg in get_user_session(user_id) if msg["role"] == "user"])
+        search_result = call_dify_workflow(search_query, context, user_id)
         update_user_session(user_id, "system", f"[SEARCH_RESULT] {search_result}")
 
         messages = get_user_session(user_id)
