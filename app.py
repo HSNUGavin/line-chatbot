@@ -29,13 +29,15 @@ DIFY_API_URL = "https://api.dify.ai/v1/workflows/run"
 DIFY_API_KEY = os.environ.get("DIFY_API_KEY")
 WORKFLOW_ID = "56389aca-bed6-4333-96a9-ce89f27b780c"
 
+# 更新的系統 prompt
 SYSTEM_PROMPT = {
     "role": "system",
     "content": (
         "你是一個法律AI助理。你有一個工具，可以呼叫 `Search API` 搜尋資訊。"
         "請在需要時使用 `[SEARCH]` 指令，例如：`[SEARCH]請搜尋最新的離婚法規`。"
         "完成搜索後，你會收到以 `[SEARCH_RESULT]` 開頭的結果，並應將其整合進回覆中。"
-        "請注意: 用戶來詢問的問題可能是同一個，請你根據上下文判斷你要使用 API 搜尋的問題，並且透過問答深入了解用戶真的想解決的問題是什麼"
+        "請注意: 用戶來詢問的問題可能是同一個，請你根據上下文判斷你要使用 API 搜尋的問題，"
+        "並且透過問答深入了解用戶真的想解決的問題是什麼。"
     )
 }
 
@@ -132,6 +134,11 @@ def handle_message(event):
     if user_message.lower() == "開始新對話":
         user_sessions.pop(user_id, None)
         reply_text = "已開始新的對話！請輸入您的法律問題。"
+    elif user_message.lower() == "搜尋資料庫":
+        reply_text = "正在為您搜尋相關資訊，請稍候..."
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+        handle_search_request(user_id, "請針對目前問題進行搜尋")
+        return
     else:
         update_user_session(user_id, "user", user_message)
         try:
@@ -158,7 +165,8 @@ def handle_message(event):
         text=reply_text,
         quick_reply=QuickReply(items=[
             QuickReplyButton(action=MessageAction(label="開始新對話", text="開始新對話")),
-            QuickReplyButton(action=MessageAction(label="繼續對話", text="繼續對話"))
+            QuickReplyButton(action=MessageAction(label="繼續對話", text="繼續對話")),
+            QuickReplyButton(action=MessageAction(label="搜尋資料庫", text="搜尋資料庫"))
         ])
     )
     line_bot_api.reply_message(event.reply_token, message)
