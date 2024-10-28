@@ -23,28 +23,18 @@ SESSION_TIMEOUT = 30 * 60  # 30分鐘
 SYSTEM_PROMPT = {
     "role": "system",
     "content": (
-        "你是一個法律AI助理，並且有權呼叫 `Search API` 搜尋資料。\n\n"
-        "**Search API 格式**：\n"
-        "`[SEARCH] 搜尋關鍵字`\n\n"
-        "當你需要搜尋時，請使用 `[SEARCH]` 指令，例如：`[SEARCH] 最新的大法官釋憲新聞`。\n\n"
-        "搜尋完成後，系統會回傳以 `[SEARCH_RESULT]` 開頭的結果，你需要根據該結果來回答用戶。\n\n"
-        "**注意**：你不會在搜尋時即刻獲得結果。請等待 `[SEARCH_RESULT]` 後再進行回應。\n"
+        "你是一個法律AI助理。你有一個工具，可以呼叫 Search API 搜尋資訊。"
+        "請在需要時使用 [SEARCH] 指令，例如：[SEARCH]請搜尋最新的離婚法規。"
+        "完成搜索後，你會收到以 [SEARCH_RESULT] 開頭的結果，並應將其整合進回覆中。"
+        "請注意: 用戶可能會反覆詢問類似問題，請依照最新的搜尋結果進行回覆，避免使用過期資訊。"
     )
 }
-
-MAX_SESSION_LENGTH = 10  # 限制對話最多保留 10 則訊息
 
 def get_user_session(user_id):
     """取得或初始化用戶的對話記錄"""
     if user_id not in user_sessions or time.time() - user_sessions[user_id]['last_time'] > SESSION_TIMEOUT:
         user_sessions[user_id] = {'messages': [SYSTEM_PROMPT], 'last_time': time.time()}
-    messages = user_sessions[user_id]['messages']
-
-    # 裁剪過長的訊息
-    if len(messages) > MAX_SESSION_LENGTH:
-        messages = messages[-MAX_SESSION_LENGTH:]
-    user_sessions[user_id]['messages'] = messages
-    return messages
+    return user_sessions[user_id]['messages']
 
 def update_user_session(user_id, role, content):
     """更新用戶的對話記錄"""
@@ -59,16 +49,10 @@ def send_push_message(user_id, text):
     except LineBotApiError as e:
         logging.error(f"推播訊息失敗: {e}")
 
-def store_search_result(user_id, search_result):
-    """將搜尋結果存入對話紀錄，並推播通知"""
+def integrate_search_result(user_id, search_result):
+    """將搜尋結果整合進對話記錄並推送結果"""
     update_user_session(user_id, "system", f"[SEARCH_RESULT] {search_result}")
-    send_push_message(user_id, f"搜尋完成，結果如下：\n{search_result}")
-
-def handle_search_request(user_id, search_query):
-    """執行搜尋並推播結果"""
-    # 模擬搜尋結果（可替換為實際 API 調用）
-    search_result = f"這是模擬的搜尋結果：{search_query} 的相關新聞。"
-    store_search_result(user_id, search_result)
+    send_push_message(user_id, f"搜尋結果如下：\n{search_result}")
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -87,57 +71,40 @@ def handle_message(event):
     user_id = event.source.user_id
     user_message = event.message.text.strip()
 
-    # 更新用戶的對話
+    # 更新用戶對話
     update_user_session(user_id, "user", user_message)
 
     if "[SEARCH]" in user_message:
-        # 處理搜尋請求，立即回應避免 token 過期
-        handle_search_request(user_id, user_message)
-        try:
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextSendMessage(text="搜尋進行中，請稍候...")
-            )
-        except LineBotApiError as e:
-            logging.warning(f"無效的 reply token，使用 push_message: {e}")
-            send_push_message(user_id, "搜尋進行中，系統將稍後推播結果給您。")
+        # 模擬搜尋結果（可替換成實際 API 呼叫）
+        search_result = "這是模擬的搜尋結果，內容如下：..."
+        integrate_search_result(user_id, search_result)
     else:
         try:
             # 呼叫 OpenAI 取得回應
             response = client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o-mini",
                 messages=get_user_session(user_id)
             )
             reply_text = response.choices[0].message.content.strip()
             update_user_session(user_id, "assistant", reply_text)
 
-            # 如果回應包含 [SEARCH] 指令，觸發內部搜尋
-            if "[SEARCH]" in reply_text:
-                search_query = reply_text.split("[SEARCH]")[-1].strip()
-                handle_search_request(user_id, search_query)
-
-                # 通知用戶搜尋正在進行
-                send_push_message(user_id, "已收到需求，系統正在搜尋資料中...")
-            else:
-                # 正常回應用戶
-                line_bot_api.reply_message(
-                    event.reply_token,
-                    TextSendMessage(
-                        text=reply_text,
-                        quick_reply=QuickReply(items=[
-                            QuickReplyButton(action=MessageAction(label="開始新對話", text="開始新對話")),
-                            QuickReplyButton(action=MessageAction(label="搜尋資料庫", text="[SEARCH]"))
-                        ])
-                    )
+            # 使用 reply_message 回應用戶
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(
+                    text=reply_text,
+                    quick_reply=QuickReply(items=[
+                        QuickReplyButton(action=MessageAction(label="開始新對話", text="開始新對話")),
+                        QuickReplyButton(action=MessageAction(label="搜尋資料庫", text="[SEARCH]"))
+                    ])
                 )
+            )
         except LineBotApiError as e:
-            # 若 reply_token 無效，改用 push_message
-            logging.warning(f"無效的 reply token，使用 push_message: {e}")
-            send_push_message(user_id, "系統繁忙，請稍後再試。")
+            # 失敗時使用 push_message
+            logging.error(f"回應失敗，改用推播訊息: {e}")
+            send_push_message(user_id, f"AI 回應發生錯誤，請稍後再試：{str(e)}")
         except Exception as e:
-            # 處理未知錯誤
-            logging.error(f"未知錯誤：{e}")
-            send_push_message(user_id, "發生未知錯誤，請稍後再試。")
+            send_push_message(user_id, f"發生未知錯誤：{str(e)}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
