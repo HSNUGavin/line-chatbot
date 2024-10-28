@@ -10,7 +10,7 @@ import requests
 import re
 import logging
 
-# 設置日誌等級為 INFO，方便查看 API 請求的細節
+# 設置日誌級別為 INFO，方便查看 API 請求的細節
 logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
@@ -53,7 +53,7 @@ def update_user_session(user_id, role, content):
     messages.append({"role": role, "content": content})
     user_sessions[user_id]['last_time'] = time.time()
 
-def call_dify_workflow(question):
+def call_dify_workflow(question, user_id):
     """呼叫 Dify Workflow API 並回傳搜尋結果"""
     API_URL = "https://api.dify.ai/v1/workflows/run"
     API_KEY = os.environ.get("DIFY_API_KEY")
@@ -65,6 +65,7 @@ def call_dify_workflow(question):
     payload = {
         "inputs": {"Question": question},
         "response_mode": "blocking",
+        "user": user_id  # 使用 LINE 用戶 ID
     }
 
     try:
@@ -72,15 +73,16 @@ def call_dify_workflow(question):
         response = requests.post(API_URL, json=payload, headers=headers)
         logging.info(f"API 回應狀態碼：{response.status_code}")
 
-        response.raise_for_status()  # 檢查是否有 HTTP 錯誤
+        response.raise_for_status()  # 檢查 HTTP 錯誤
         result = response.json()
 
         if result["data"]["status"] == "succeeded":
             logging.info("成功取得搜尋結果")
             return result["data"]["outputs"].get("text", "未找到相關結果。")
         else:
-            logging.error(f"API 搜尋失敗：{result['data'].get('error', '未知錯誤')}")
-            return f"API 搜尋失敗：{result['data'].get('error', '未知錯誤')}"
+            error_msg = result["data"].get("error", "未知錯誤")
+            logging.error(f"API 搜尋失敗：{error_msg}")
+            return f"API 搜尋失敗：{error_msg}"
 
     except requests.exceptions.Timeout:
         logging.error("API 請求超時")
@@ -98,7 +100,7 @@ def call_dify_workflow(question):
 def handle_search_request(user_id, search_query):
     """非同步處理搜索請求並更新對話"""
     def search_and_respond():
-        search_result = call_dify_workflow(search_query)
+        search_result = call_dify_workflow(search_query, user_id)
         update_user_session(user_id, "system", f"[SEARCH_RESULT] {search_result}")
         messages = get_user_session(user_id)
         response = client.chat.completions.create(
@@ -153,7 +155,6 @@ def handle_message(event):
         except Exception as e:
             reply_text = f"發生錯誤：{e}"
 
-    # 傳送回應並附加 Quick Reply 選項
     message = TextSendMessage(
         text=reply_text,
         quick_reply=QuickReply(items=[
