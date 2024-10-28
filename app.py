@@ -23,9 +23,13 @@ SESSION_TIMEOUT = 30 * 60  # 30分鐘
 SYSTEM_PROMPT = {
     "role": "system",
     "content": (
-        "你是一個法律AI助理。你有一個工具，可以呼叫 `Search API` 搜尋資訊。"
-        "完成搜索後，你會收到以 `[SEARCH_RESULT]` 開頭的結果，並應根據此結果產生回覆。"
-        "請根據最新的搜尋結果進行回答，並避免使用過期資訊。"
+        "你是一個法律AI助理，並且有權呼叫 `Search API` 搜尋資料。\n\n"
+        "**Search API 格式**：\n"
+        "`[SEARCH] 搜尋關鍵字`\n\n"
+        "當你需要搜尋時，請使用 `[SEARCH]` 指令，例如：`[SEARCH] 最新的大法官釋憲新聞`。\n\n"
+        "搜尋完成後，系統會回傳以 `[SEARCH_RESULT]` 開頭的結果，你需要根據該結果來回答用戶。\n\n"
+        "**注意**：你不會在搜尋時即刻獲得結果。請等待 `[SEARCH_RESULT]` 後再進行回應。\n"
+        "若無法取得搜尋結果或需要更多資訊，請詢問用戶以澄清需求。\n"
     )
 }
 
@@ -57,18 +61,15 @@ def send_push_message(user_id, text):
         logging.error(f"推播訊息失敗: {e}")
 
 def store_search_result(user_id, search_result):
-    """將搜尋結果存入對話紀錄（不直接回應用戶）"""
+    """將搜尋結果存入對話紀錄，並推播通知"""
     update_user_session(user_id, "system", f"[SEARCH_RESULT] {search_result}")
-    send_push_message(user_id, "已完成搜尋，系統會根據結果回應您的問題。")
+    send_push_message(user_id, "搜尋已完成，系統將根據結果進一步回應您的問題。")
 
 def handle_search_request(user_id, user_message):
     """處理搜尋請求"""
-    # 模擬搜尋結果（可替換為實際 API 呼叫）
-    search_result = "這是模擬的搜尋結果：..."
+    # 模擬搜尋結果（可替換為 API 呼叫）
+    search_result = "這是模擬的搜尋結果：最新的大法官釋憲新聞內容。"
     store_search_result(user_id, search_result)
-
-    # 通知用戶搜尋已完成
-    send_push_message(user_id, "搜尋完成，系統將根據結果進一步回應。")
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -103,7 +104,7 @@ def handle_message(event):
             reply_text = response.choices[0].message.content.strip()
             update_user_session(user_id, "assistant", reply_text)
 
-            # 使用 reply_message 回應用戶
+            # 即刻回應用戶，避免 token 過期
             line_bot_api.reply_message(
                 event.reply_token,
                 TextSendMessage(
@@ -115,7 +116,7 @@ def handle_message(event):
                 )
             )
         except LineBotApiError as e:
-            # 失敗時使用推播訊息
+            # 若 reply token 無效，改用推播訊息
             logging.error(f"回應失敗，改用推播訊息: {e}")
             send_push_message(user_id, f"AI 回應發生錯誤，請稍後再試：{str(e)}")
         except Exception as e:
