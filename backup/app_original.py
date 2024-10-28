@@ -2,7 +2,7 @@ from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import *
-from openai import OpenAI
+import openai
 import os
 import time
 import threading
@@ -13,7 +13,7 @@ app = Flask(__name__)
 # 初始化 LINE Bot 和 OpenAI API
 line_bot_api = LineBotApi(os.environ['CHANNEL_ACCESS_TOKEN'])
 handler = WebhookHandler(os.environ['CHANNEL_SECRET'])
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+openai.api_key = os.environ.get("OPENAI_API_KEY")
 
 # 用戶對話記錄
 user_sessions = {}
@@ -76,7 +76,7 @@ def handle_search_request(user_id, search_query):
         search_result = call_dify_workflow(search_query)
         update_user_session(user_id, "system", f"[SEARCH_RESULT] {search_result}")
         messages = get_user_session(user_id)
-        response = client.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=messages
         )
@@ -109,7 +109,7 @@ def handle_message(event):
     else:
         update_user_session(user_id, "user", user_message)
         try:
-            response = client.chat.completions.create(
+            response = openai.ChatCompletion.create(
                 model="gpt-4o-mini",
                 messages=get_user_session(user_id)
             )
@@ -125,7 +125,7 @@ def handle_message(event):
                 handle_search_request(user_id, search_query)
                 return
 
-        except Exception as e:
+        except openai.error.OpenAIError as e:
             reply_text = f"發生錯誤：{e}"
 
     # 發送回應給用戶並附加 Quick Reply 選項
