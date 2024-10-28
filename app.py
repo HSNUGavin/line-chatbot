@@ -29,7 +29,6 @@ SYSTEM_PROMPT = {
         "當你需要搜尋時，請使用 `[SEARCH]` 指令，例如：`[SEARCH] 最新的大法官釋憲新聞`。\n\n"
         "搜尋完成後，系統會回傳以 `[SEARCH_RESULT]` 開頭的結果，你需要根據該結果來回答用戶。\n\n"
         "**注意**：你不會在搜尋時即刻獲得結果。請等待 `[SEARCH_RESULT]` 後再進行回應。\n"
-        "若無法取得搜尋結果或需要更多資訊，請詢問用戶以澄清需求。\n"
     )
 }
 
@@ -63,7 +62,7 @@ def send_push_message(user_id, text):
 def store_search_result(user_id, search_result):
     """將搜尋結果存入對話紀錄，並推播通知"""
     update_user_session(user_id, "system", f"[SEARCH_RESULT] {search_result}")
-    send_push_message(user_id, "搜尋已完成，系統將根據結果進一步回應您的問題。")
+    send_push_message(user_id, "搜尋已完成，系統將根據結果回應您的問題。")
 
 def handle_search_request(user_id, user_message):
     """處理搜尋請求"""
@@ -94,6 +93,17 @@ def handle_message(event):
     if "[SEARCH]" in user_message:
         # 處理搜尋請求
         handle_search_request(user_id, user_message)
+
+        # 回應用戶，通知搜尋進行中，避免 token 過期
+        try:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="搜尋進行中，請稍候...")
+            )
+        except LineBotApiError as e:
+            # 若 reply_token 無效，改用推播訊息，並記錄錯誤
+            logging.warning(f"無效的 reply token，使用 push_message: {e}")
+            send_push_message(user_id, "搜尋進行中，系統將稍後推播結果給您。")
     else:
         try:
             # 呼叫 OpenAI 取得回應
@@ -116,12 +126,13 @@ def handle_message(event):
                 )
             )
         except LineBotApiError as e:
-            # 若 reply token 無效，改用推播訊息
-            logging.error(f"回應失敗，改用推播訊息: {e}")
-            send_push_message(user_id, f"AI 回應發生錯誤，請稍後再試：{str(e)}")
+            # 若 reply token 無效，改用推播訊息，並記錄錯誤
+            logging.warning(f"無效的 reply token，使用 push_message: {e}")
+            send_push_message(user_id, "系統繁忙，請稍後再試。")
         except Exception as e:
             # 處理未知錯誤
-            send_push_message(user_id, f"發生未知錯誤：{str(e)}")
+            logging.error(f"未知錯誤：{e}")
+            send_push_message(user_id, "發生未知錯誤，請稍後再試。")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
