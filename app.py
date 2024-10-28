@@ -7,6 +7,7 @@ import os
 import time
 import threading
 import requests
+import re  # 匯入正規表達式模組
 
 app = Flask(__name__)
 
