@@ -8,6 +8,10 @@ import time
 import threading
 import requests
 import re
+import logging
+
+# 設置日誌等級為 INFO，方便查看 API 請求的細節
+logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 
@@ -24,9 +28,9 @@ SESSION_TIMEOUT = 30 * 60  # 30 分鐘
 SYSTEM_PROMPT = {
     "role": "system",
     "content": (
-        "你是一個法律AI助理。你具備一個工具可以搜尋網路資源，可以呼叫 `Search API` 搜尋資訊。"
+        "你是一個法律AI助理。當你無法回答某個問題時，可以呼叫 `Search API` 搜尋資訊。"
         "請在需要時使用 `[SEARCH]` 指令，例如：`[SEARCH]請搜尋最新的離婚法規`。"
-        "完成搜索後，你會收到以 `[SEARCH_RESULT]` 開頭的結果，並應將其整合進回覆中。請你積極使用這個工具"
+        "完成搜索後，你會收到以 `[SEARCH_RESULT]` 開頭的結果，並應將其整合進回覆中。"
     )
 }
 
@@ -35,9 +39,10 @@ def get_user_session(user_id):
     current_time = time.time()
     if user_id in user_sessions:
         if current_time - user_sessions[user_id]['last_time'] > SESSION_TIMEOUT:
-            del user_sessions[user_id]
+            del user_sessions[user_id]  # 刪除過期的對話
         else:
             return user_sessions[user_id]['messages']
+
     # 初始化新對話
     user_sessions[user_id] = {'messages': [SYSTEM_PROMPT], 'last_time': current_time}
     return user_sessions[user_id]['messages']
@@ -52,6 +57,7 @@ def call_dify_workflow(question):
     """呼叫 Dify Workflow API 並回傳搜尋結果"""
     API_URL = "https://api.dify.ai/v1/workflows/run"
     API_KEY = os.environ.get("DIFY_API_KEY")
+
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json"
@@ -60,24 +66,33 @@ def call_dify_workflow(question):
         "inputs": {"Question": question},
         "response_mode": "blocking",
     }
+
     try:
+        logging.info(f"發送 API 請求至 {API_URL}，問題：{question}")
         response = requests.post(API_URL, json=payload, headers=headers)
+        logging.info(f"API 回應狀態碼：{response.status_code}")
+
         response.raise_for_status()  # 檢查是否有 HTTP 錯誤
         result = response.json()
 
         if result["data"]["status"] == "succeeded":
+            logging.info("成功取得搜尋結果")
             return result["data"]["outputs"].get("text", "未找到相關結果。")
         else:
-            # 回傳具體的失敗訊息給用戶
-            return "搜索失敗，API 回應：{}".format(result["data"].get("error", "未知錯誤"))
+            logging.error(f"API 搜尋失敗：{result['data'].get('error', '未知錯誤')}")
+            return f"API 搜尋失敗：{result['data'].get('error', '未知錯誤')}"
 
     except requests.exceptions.Timeout:
+        logging.error("API 請求超時")
         return "搜索請求超時，請稍後再試。"
     except requests.exceptions.ConnectionError:
+        logging.error("無法連接到 API 伺服器")
         return "無法連接到搜索服務，請檢查您的網路連線。"
     except requests.exceptions.HTTPError as e:
+        logging.error(f"API 請求失敗，狀態碼：{e.response.status_code}")
         return f"API 請求失敗，狀態碼：{e.response.status_code}"
     except Exception as e:
+        logging.error(f"發生未知錯誤：{str(e)}")
         return f"發生未知錯誤：{e}"
 
 def handle_search_request(user_id, search_query):
@@ -92,7 +107,6 @@ def handle_search_request(user_id, search_query):
         )
         reply_text = response.choices[0].message.content.strip()
         update_user_session(user_id, "assistant", reply_text)
-        # 使用 push_message 發送最終回覆
         line_bot_api.push_message(user_id, TextSendMessage(text=reply_text))
 
     threading.Thread(target=search_and_respond).start()
@@ -131,7 +145,6 @@ def handle_message(event):
             match = re.search(search_pattern, reply_text)
             if match:
                 search_query = match.group(1).strip()
-                # 立即回覆，告知用戶正在搜尋
                 reply_text = "正在為您搜尋相關資訊，請稍候..."
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                 handle_search_request(user_id, search_query)
