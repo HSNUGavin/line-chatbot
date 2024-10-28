@@ -23,6 +23,7 @@ client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 # 用戶對話紀錄存儲區
 user_sessions = {}
+active_conversations = {}  # 追蹤活躍對話
 SESSION_TIMEOUT = 30 * 60  # 30 分鐘
 
 # Dify API 設定
@@ -44,6 +45,26 @@ SYSTEM_PROMPT = {
 def generate_conversation_id():
     """生成唯一的對話 ID"""
     return str(uuid.uuid4())
+
+def get_active_conversation_id(user_id):
+    """獲取用戶當前活躍的對話 ID，如果不存在則創建新的"""
+    if user_id not in active_conversations:
+        active_conversations[user_id] = generate_conversation_id()
+    return active_conversations[user_id]
+
+def start_new_conversation(user_id):
+    """開始新的對話"""
+    # 生成新的對話 ID
+    new_conversation_id = generate_conversation_id()
+    active_conversations[user_id] = new_conversation_id
+    # 初始化新對話的訊息歷史
+    if user_id not in user_sessions:
+        user_sessions[user_id] = {}
+    user_sessions[user_id][new_conversation_id] = {
+        'messages': [SYSTEM_PROMPT],
+        'last_time': time.time()
+    }
+    return new_conversation_id
 
 def get_user_session(user_id, conversation_id):
     """取得或初始化用戶的對話記錄，使用 conversation_id 區分不同對話"""
@@ -135,22 +156,29 @@ def callback():
 def handle_message(event):
     """處理用戶訊息"""
     user_id = event.source.user_id
-    conversation_id = generate_conversation_id()
     user_message = event.message.text
 
     if user_message.lower() == "開始新對話":
-        conversation_id = generate_conversation_id()  # 重置對話 ID
+        conversation_id = start_new_conversation(user_id)
         reply_text = "已開始新的對話！請輸入您的法律問題。"
     else:
+        # 使用當前活躍的對話 ID
+        conversation_id = get_active_conversation_id(user_id)
+        # 將用戶訊息存入對話記錄
         update_user_session(user_id, conversation_id, "user", user_message)
+
         try:
             # 使用完整的對話記錄呼叫 OpenAI API
             messages = get_user_session(user_id, conversation_id)
+            logging.info(f"傳遞給 OpenAI 的訊息：{messages}")  # 確認訊息內容
+
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=messages
             )
             reply_text = response.choices[0].message.content.strip()
+
+            # 將 AI 回應存入對話記錄
             update_user_session(user_id, conversation_id, "assistant", reply_text)
 
             # 檢查是否觸發 [SEARCH] 指令
@@ -166,6 +194,7 @@ def handle_message(event):
         except Exception as e:
             reply_text = f"發生錯誤：{e}"
 
+    # 發送回應給用戶
     message = TextSendMessage(
         text=reply_text,
         quick_reply=QuickReply(items=[
