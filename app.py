@@ -25,14 +25,16 @@ client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 user_sessions = {}
 SESSION_TIMEOUT = 30 * 60  # 30 分鐘
 
+# Dify API 設定
 DIFY_API_URL = "https://api.dify.ai/v1/workflows/run"
 DIFY_API_KEY = os.environ.get("DIFY_API_KEY")
 
+# AI 系統提示
 SYSTEM_PROMPT = {
     "role": "system",
     "content": (
-        "你是一個法律AI助理。你有一個工具，可以呼叫 `Search API` 搜尋資訊。這個 API 會直接搜尋網路相關資料"
-        "請在需要時使用 `[SEARCH]` 指令，例如：`[SEARCH]相關關鍵字`。"
+        "你是一個法律AI助理。你有一個工具，可以呼叫 `Search API` 搜尋資訊。"
+        "請在需要時使用 `[SEARCH]` 指令，例如：`[SEARCH]請搜尋最新的離婚法規`。"
         "完成搜索後，你會收到以 `[SEARCH_RESULT]` 開頭的結果，並應將其整合進回覆中。"
         "請注意: 用戶來詢問的問題可能是同一個，請你根據上下文判斷你要使用 API 搜尋的問題，"
         "並且透過問答深入了解用戶真正想解決的問題是什麼。"
@@ -44,7 +46,7 @@ def generate_conversation_id():
     return str(uuid.uuid4())
 
 def get_user_session(user_id, conversation_id):
-    """取得或初始化用戶對話記錄，使用 conversation_id 來隔離不同對話"""
+    """取得或初始化用戶的對話記錄，使用 conversation_id 區分不同對話"""
     current_time = time.time()
     if user_id in user_sessions:
         if conversation_id in user_sessions[user_id]:
@@ -80,10 +82,13 @@ def call_dify_workflow(question, user_id):
     }
 
     logging.info(f"發送 API 請求至 {DIFY_API_URL}，問題：{question}")
+
     try:
         response = requests.post(DIFY_API_URL, json=payload, headers=headers)
         response.raise_for_status()
         result = response.json()
+        logging.info(f"API 回應內容：{result}")
+
         if result["data"]["status"] == "succeeded":
             return result["data"]["outputs"].get("text", "未找到相關結果。")
         else:
@@ -105,6 +110,7 @@ def handle_search_request(user_id, conversation_id, search_query):
         )
         reply_text = response.choices[0].message.content.strip()
         update_user_session(user_id, conversation_id, "assistant", reply_text)
+
         line_bot_api.push_message(user_id, TextSendMessage(text=reply_text))
 
     threading.Thread(target=search_and_respond).start()
