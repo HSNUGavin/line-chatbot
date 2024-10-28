@@ -7,7 +7,7 @@ import os
 import time
 import threading
 import requests
-import re  # 匯入正規表達式模組
+import re
 
 app = Flask(__name__)
 
@@ -24,9 +24,9 @@ SESSION_TIMEOUT = 30 * 60  # 30 分鐘
 SYSTEM_PROMPT = {
     "role": "system",
     "content": (
-        "你是一個法律AI助理。當你無法回答某個問題時，可以呼叫 `Search API` 搜尋資訊。"
+        "你是一個法律AI助理。你具備一個工具可以搜尋網路資源，可以呼叫 `Search API` 搜尋資訊。"
         "請在需要時使用 `[SEARCH]` 指令，例如：`[SEARCH]請搜尋最新的離婚法規`。"
-        "完成搜索後，你會收到以 `[SEARCH_RESULT]` 開頭的結果，並應將其整合進回覆中。"
+        "完成搜索後，你會收到以 `[SEARCH_RESULT]` 開頭的結果，並應將其整合進回覆中。請你積極使用這個工具"
     )
 }
 
@@ -35,7 +35,7 @@ def get_user_session(user_id):
     current_time = time.time()
     if user_id in user_sessions:
         if current_time - user_sessions[user_id]['last_time'] > SESSION_TIMEOUT:
-            del user_sessions[user_id]  # 刪除過期的對話
+            del user_sessions[user_id]
         else:
             return user_sessions[user_id]['messages']
     # 初始化新對話
@@ -83,6 +83,7 @@ def handle_search_request(user_id, search_query):
         )
         reply_text = response.choices[0].message.content.strip()
         update_user_session(user_id, "assistant", reply_text)
+        # 使用 push_message 發送最終回覆
         line_bot_api.push_message(user_id, TextSendMessage(text=reply_text))
 
     threading.Thread(target=search_and_respond).start()
@@ -121,6 +122,7 @@ def handle_message(event):
             match = re.search(search_pattern, reply_text)
             if match:
                 search_query = match.group(1).strip()
+                # 立即回覆，告知用戶正在搜尋
                 reply_text = "正在為您搜尋相關資訊，請稍候..."
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                 handle_search_request(user_id, search_query)
@@ -129,7 +131,7 @@ def handle_message(event):
         except Exception as e:
             reply_text = f"發生錯誤：{e}"
 
-    # 發送回應給用戶並附加 Quick Reply 選項
+    # 傳送回應並附加 Quick Reply 選項
     message = TextSendMessage(
         text=reply_text,
         quick_reply=QuickReply(items=[
