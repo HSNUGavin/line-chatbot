@@ -55,11 +55,11 @@ def handle_message(event):
 
         # 准备要发送给 Dify API 的数据
         payload = {
+            "inputs": {},
             "query": user_message,
             "user": user_id,
             "conversation_id": conversation_id if conversation_id else "",
             "response_mode": "blocking",  # 使用阻塞模式获取完整回复
-            "inputs": {}
         }
 
         headers = {
