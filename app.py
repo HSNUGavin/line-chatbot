@@ -20,21 +20,20 @@ line_bot_api = LineBotApi(os.environ['CHANNEL_ACCESS_TOKEN'])
 handler = WebhookHandler(os.environ['CHANNEL_SECRET'])
 
 # Dify API 设置
-DIFY_API_URL = "https://api.dify.ai/v1/chat-messages"
+DIFY_API_URL = "https://api.dify.ai/v1/workflows/run"  # 修改为正确的 API 端点
 DIFY_API_KEY = os.environ.get("DIFY_API_KEY")
 
 # 用于存储用户的 conversation_id
 conversation_ids = {}
 
-def call_dify_chat_messages(user_message, user_id, conversation_id=None):
-    """调用 Dify Chat Messages API 并返回响应"""
+def call_dify_workflow(user_message, user_id, conversation_id=None):
+    """调用 Dify Workflow API 并返回响应"""
     headers = {
         "Authorization": f"Bearer {DIFY_API_KEY}",
         "Content-Type": "application/json"
     }
     payload = {
-        "inputs": {},
-        "query": user_message,
+        "inputs": {"question": user_message},  # 根据您的 API，输入参数为 question
         "response_mode": "blocking",
         "user": user_id
     }
@@ -51,6 +50,7 @@ def call_dify_chat_messages(user_message, user_id, conversation_id=None):
 
         return result
     except requests.RequestException as e:
+        logging.error(f"API 请求失败：{e}")
         return {"error": f"API 请求失败：{e}"}
 
 @app.route("/callback", methods=['POST'])
@@ -72,7 +72,7 @@ def handle_message(event):
 
     global conversation_ids  # 访问全局字典
 
-    if user_message.lower() == "开始新对话":
+    if user_message.lower() in ["开始新对话", "開始新對話"]:
         # 开始新的对话
         conversation_ids[user_id] = None
         reply_text = "已开始新的对话！请输入您的法律问题。"
@@ -80,14 +80,16 @@ def handle_message(event):
         # 获取用户的 conversation_id
         conversation_id = conversation_ids.get(user_id)
         # 调用 Dify API 获取响应
-        result = call_dify_chat_messages(user_message, user_id, conversation_id)
+        result = call_dify_workflow(user_message, user_id, conversation_id)
         if "error" in result:
             reply_text = result["error"]
         else:
             # 获取响应文本
-            reply_text = result.get("answer", "未找到相关结果。")
+            data = result.get("data", {})
+            outputs = data.get("outputs", {})
+            reply_text = outputs.get("text", "未找到相关结果。")
             # 更新 conversation_id
-            conversation_id = result.get("conversation_id")
+            conversation_id = data.get("conversation_id")
             conversation_ids[user_id] = conversation_id
 
     # 发送回复给用户
