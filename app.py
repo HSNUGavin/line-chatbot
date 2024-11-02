@@ -1,10 +1,12 @@
 import os
+import time
 import logging
 import requests
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import *
+import threading
 
 # 设置日志级别
 logging.basicConfig(level=logging.INFO)
@@ -18,6 +20,10 @@ handler = WebhookHandler(os.environ['CHANNEL_SECRET'])
 # Dify API 设置
 DIFY_API_URL = "https://api.dify.ai/v1/chat-messages"
 DIFY_API_KEY = os.environ.get("DIFY_API_KEY")
+
+# 检查 DIFY_API_KEY 是否成功获取
+if not DIFY_API_KEY:
+    logging.error("DIFY_API_KEY 未设置，请检查环境变量。")
 
 # 用户对话记录存储区
 user_conversations = {}  # 存储用户的 conversation_id
@@ -42,20 +48,18 @@ def handle_message(event):
     if user_message.lower() == "开始新对话":
         # 开始新的对话
         user_conversations[user_id] = None
-        reply_text = "已开始新的对话！请继续输入您的问题。"
+        reply_text = "已开始新的对话！请输入您的问题。"
     else:
         # 获取用户的 conversation_id
-        conversation_id = user_conversations.get(user_id, "")
+        conversation_id = user_conversations.get(user_id)
 
         # 准备要发送给 Dify API 的数据
         payload = {
-            "inputs": {},  # 如果有需要，可以在这里填写您的应用所需的输入参数
             "query": user_message,
-            "response_mode": "blocking",  # 或者 "streaming"
-            "conversation_id": conversation_id,
             "user": user_id,
-            # 如果有文件需要上传，可以在这里添加 "files" 参数
-            # "files": [...]
+            "conversation_id": conversation_id if conversation_id else "",
+            "response_mode": "blocking",  # 使用阻塞模式获取完整回复
+            "inputs": {}
         }
 
         headers = {
@@ -63,30 +67,35 @@ def handle_message(event):
             "Content-Type": "application/json"
         }
 
+        # 打印调试信息
+        logging.info(f"Payload: {payload}")
+        logging.info(f"Headers: {headers}")
+
         try:
-            # 调用 Dify Chat Messages API
+            # 调用 Dify API
             response = requests.post(DIFY_API_URL, json=payload, headers=headers)
             response.raise_for_status()
             result = response.json()
 
-            logging.info(f"Dify API 响应：{result}")
-
-            # 获取响应内容和新的 conversation_id
+            # 获取回复内容和新的 conversation_id
             reply_text = result.get("answer", "抱歉，我无法理解您的问题。")
-            conversation_id = result.get("conversation_id", "")
+            conversation_id = result.get("conversation_id")
 
             # 更新用户的 conversation_id
             user_conversations[user_id] = conversation_id
 
         except requests.RequestException as e:
+            if e.response is not None:
+                logging.error(f"Response content: {e.response.text}")
             logging.error(f"调用 Dify API 时发生错误：{e}")
-            reply_text = "抱歉，处理您的请求时出现了问题。请稍后再试。"
+            reply_text = f"抱歉，发生了错误：{e}"
 
     # 发送回复给用户
     message = TextSendMessage(
         text=reply_text,
         quick_reply=QuickReply(items=[
-            QuickReplyButton(action=MessageAction(label="开始新对话", text="开始新对话"))
+            QuickReplyButton(action=MessageAction(label="开始新对话", text="开始新对话")),
+            QuickReplyButton(action=MessageAction(label="继续对话", text="继续对话"))
         ])
     )
     line_bot_api.reply_message(event.reply_token, message)
