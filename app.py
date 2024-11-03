@@ -38,7 +38,7 @@ def callback():
     except Exception as e:
         # 记录异常
         logging.error(f"处理回调时发生异常：{e}")
-    return 'OK'  # 确保返回 'OK'
+    return 'OK'  # 确保返回 200 OK
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
@@ -61,7 +61,7 @@ def handle_message(event):
                     "user": user_id
                 }
                 try:
-                    delete_response = requests.delete(delete_url, json=delete_payload, headers=headers, timeout=5)
+                    delete_response = requests.delete(delete_url, json=delete_payload, headers=headers)
                     delete_response.raise_for_status()
                     logging.info(f"已删除用户 {user_id} 的对话 {conversation_id}")
                 except requests.RequestException as e:
@@ -108,6 +108,10 @@ def handle_message(event):
             # 更新用户的 conversation_id
             with conversation_lock:
                 user_conversations[user_id] = new_conversation_id
+
+            # 在回复的末尾附加 conversation_id 供调试使用
+            if new_conversation_id:
+                reply_text += f"\n\n[conversation_id: {new_conversation_id}]"
 
         except requests.RequestException as e:
             logging.error(f"请求 Dify API 出错：{e}")
