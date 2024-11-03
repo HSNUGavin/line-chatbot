@@ -58,8 +58,8 @@ def handle_message(event):
             "inputs": {},
             "query": user_message,
             "user": user_id,
-            "conversation_id": conversation_id if conversation_id else "",
             "response_mode": "blocking",  # 使用阻塞模式获取完整回复
+            "conversation_id": conversation_id if conversation_id else "",
         }
 
         headers = {
