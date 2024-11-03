@@ -3,7 +3,7 @@ import logging
 import requests
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
-from linebot.exceptions import InvalidSignatureError
+from linebot.exceptions import InvalidSignatureError, LineBotApiError
 from linebot.models import *
 import threading
 
@@ -38,7 +38,7 @@ def callback():
     except Exception as e:
         # 记录异常
         logging.error(f"处理回调时发生异常：{e}")
-    return 'OK'  # 确保返回 200 OK
+    return 'OK'  # 确保返回 'OK'
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
@@ -61,7 +61,7 @@ def handle_message(event):
                     "user": user_id
                 }
                 try:
-                    delete_response = requests.delete(delete_url, json=delete_payload, headers=headers)
+                    delete_response = requests.delete(delete_url, json=delete_payload, headers=headers, timeout=5)
                     delete_response.raise_for_status()
                     logging.info(f"已删除用户 {user_id} 的对话 {conversation_id}")
                 except requests.RequestException as e:
