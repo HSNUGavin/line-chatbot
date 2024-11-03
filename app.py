@@ -49,38 +49,46 @@ def handle_message(event):
     if user_message.lower() == "開始新對話":
         # 开始新的对话
         with conversation_lock:
-            # 重置 conversation_id 和 conversation_variables
-            user_conversations[user_id] = {
-                'conversation_id': None,
-                'conversation_variables': {}
-            }
+            conversation_id = user_conversations.get(user_id)
+            if conversation_id:
+                # 调用 Dify API 删除之前的对话
+                delete_url = f"https://api.dify.ai/v1/conversations/{conversation_id}"
+                headers = {
+                    "Authorization": f"Bearer {DIFY_API_KEY}",
+                    "Content-Type": "application/json"
+                }
+                delete_payload = {
+                    "user": user_id
+                }
+                try:
+                    delete_response = requests.delete(delete_url, json=delete_payload, headers=headers)
+                    delete_response.raise_for_status()
+                    logging.info(f"已删除用户 {user_id} 的对话 {conversation_id}")
+                except requests.RequestException as e:
+                    logging.error(f"删除对话 {conversation_id} 失败：{e}")
+                finally:
+                    # 无论删除是否成功，都重置 conversation_id
+                    user_conversations[user_id] = None
+            else:
+                # 如果没有 conversation_id，直接重置
+                user_conversations[user_id] = None
         reply_text = "已开始新的对话！请输入您的问题。"
     else:
-        # 获取用户的对话信息
+        # 获取用户的 conversation_id
         with conversation_lock:
-            user_conv = user_conversations.get(user_id, {
-                'conversation_id': None,
-                'conversation_variables': {}
-            })
-
-        conversation_id = user_conv.get('conversation_id')
-        conversation_variables = user_conv.get('conversation_variables', {})
+            conversation_id = user_conversations.get(user_id)
 
         # 准备发送给 Dify API 的数据
         payload = {
             "query": user_message,
             "user": user_id,
-            "response_mode": "blocking"  # 使用阻塞模式获取完整回复
+            "response_mode": "blocking",  # 使用阻塞模式获取完整回复
+            "inputs": {}
         }
 
-        # 当开始新对话时，不包含 conversation_id，并可以传递 inputs
+        # 仅当有有效的 conversation_id 时才包含它
         if conversation_id:
-            # 已有对话，包含 conversation_id，不传递 inputs
             payload["conversation_id"] = conversation_id
-        else:
-            # 新的对话，可以传递 inputs（如有需要）
-            if conversation_variables:
-                payload["inputs"] = conversation_variables
 
         headers = {
             "Authorization": f"Bearer {DIFY_API_KEY}",
@@ -99,10 +107,7 @@ def handle_message(event):
 
             # 更新用户的 conversation_id
             with conversation_lock:
-                user_conversations[user_id] = {
-                    'conversation_id': new_conversation_id,
-                    'conversation_variables': conversation_variables  # 保持不变
-                }
+                user_conversations[user_id] = new_conversation_id
 
             # 在回复的末尾附加 conversation_id 供调试使用
             if new_conversation_id:
